@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Les données ne sont accessibles qu'avec la clé d'accès (64 caractères),
+    // dérivée du code d'accès de l'équipe. Sans le code, impossible de lire ou d'écrire.
+    match /events/{key}/{coll}/{doc} {
+      allow read, write: if key.size() == 64 && coll in ['invites', 'meta'];
+    }
+  }
+}
