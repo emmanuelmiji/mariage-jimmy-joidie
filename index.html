@@ -264,7 +264,7 @@ const LS_KEY = "mariage-jj-access";
 let fs = null, base = null, accessCode = null;
 const guests = new Map();
 let cfg = { a1:"Jimmy", a2:"Joidie", date:"Samedi 2 janvier 2027", time:"19h00", place:"", msg:"" };
-let attFilter = "present", current = null;
+let attFilter = "present", current = null, listReady = false;
 
 // ---------- helpers ----------
 function toast(m){ const t=$("toast"); t.textContent=m; t.classList.add("on"); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("on"),2600); }
@@ -387,8 +387,26 @@ function showResult(kind,ico,title,name,detail){
 }
 async function checkIn(code){
   if(!code){ showResult("bad","❌","Code illisible","","Réessayez, ou tapez le code."); return; }
-  showResult("info","⏳","Vérification…",PREFIX+code,"");
   const now=new Date().toISOString();
+  // Réponse instantanée à partir de la liste déjà chargée sur le téléphone
+  const local=guests.get(code);
+  if(guests.size && listReady){
+    const det0=local?(plural(local.places||1,"personne")+(local.table?(" · Table <b>"+esc(local.table)+"</b>"):"")):"";
+    if(!local){ showResult("bad","❌","Invitation inconnue",PREFIX+code,"Ce code n'existe pas dans la liste."); return; }
+    if(local.present){ showResult("warn","⚠️","Déjà entré à "+hhmm(local.arriveeA),local.nom,det0+"<br>Cette invitation a déjà été utilisée."); return; }
+    showResult("ok","✅","Bienvenue !",local.nom,det0);
+    local.present=true; local.arriveeA=now; renderAll();
+    // Vérification en arrière-plan (si un autre téléphone l'a scannée au même moment)
+    runTransaction(fs, async (tx)=>{
+      const s=await tx.get(gRef(code)); if(!s.exists()) return {kind:"unknown"};
+      const g=s.data(); if(g.present) return {kind:"already",g};
+      tx.update(gRef(code),{present:true, arriveeA:now}); return {kind:"ok"};
+    }).then(o=>{
+      if(o.kind==="already" && o.g.arriveeA!==now) showResult("warn","⚠️","Déjà entré à "+hhmm(o.g.arriveeA),o.g.nom,"Scannée sur un autre téléphone.");
+    }).catch(()=>{ updateDoc(gRef(code),{present:true,arriveeA:now}).catch(()=>{}); });
+    return;
+  }
+  showResult("info","⏳","Vérification…",PREFIX+code,"");
   let outcome;
   try{
     outcome = await runTransaction(fs, async (tx)=>{
@@ -616,7 +634,7 @@ function startApp(){
   $("teamLink").textContent=teamUrl();
   let timer=setTimeout(()=>setOffline("Connexion lente : la liste n'est pas encore à jour…"),10000);
   onSnapshot(collection(fs,base,"invites"),{includeMetadataChanges:true},snap=>{
-    guests.clear(); snap.forEach(d=>guests.set(d.id,d.data()));
+    guests.clear(); snap.forEach(d=>guests.set(d.id,{...d.data()})); listReady=true;
     if(!snap.metadata.fromCache){ clearTimeout(timer); setOffline(""); } else if(!navigator.onLine) setOffline("Hors ligne : les scans seront synchronisés au retour du réseau.");
     renderAll();
   },err=>{ clearTimeout(timer); setOffline("Impossible de charger la liste ("+(err.code||"erreur")+")."); });
